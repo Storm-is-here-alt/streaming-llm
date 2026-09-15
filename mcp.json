@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/storm/my-project"]
+    },
+    "codegraph": {
+      "command": "codegraph",
+      "args": ["serve", "--mcp"]
+    },
+    "spec-workflow": {
+      "command": "npx",
+      "args": ["-y", "spec-workflow-mcp@latest"]
+    },
+    "terminal-mcp": {
+      "command": "node",
+      "args": ["/home/storm/.lmstudio/extensions/plugins/lmstudio/terminal-mcp-server/build/index.js"],
+      "env": {}
+    }
+  }
+}

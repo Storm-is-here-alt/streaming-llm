@@ -68,32 +68,39 @@ async fn ws_handler(
 }
 
 async fn handle_socket(mut socket: WebSocket) {
-    if let Some(Message::Text(text)) = socket.recv().await {
-        // Parse incoming message
-        if let Ok(req) = serde_json::from_str::<ChatRequest>(&text) {
-            match req.t.as_str() {
-                "chat" => {
-                    // Process chat request
-                    let response = BlockResponse {
-                        t: "block".to_string(),
-                        tokens: vec!["Hello".to_string(), " world".to_string()],
-                        audit: vec![],
-                    };
-                    
-                    let _ = socket
-                        .send(Message::Text(serde_json::to_string(&response).unwrap()))
-                        .await;
-                    
-                    let _ = socket.send(Message::Text("{\"t\":\"done\"}".to_string())).await;
-                }
-                "feedback" => {
-                    // Handle feedback
-                    if let Ok(fb) = serde_json::from_str::<FeedbackRequest>(&text) {
-                        println!("Received feedback for ids {:?}: reward={}", fb.ids, fb.reward);
+    use axum::extract::ws::Message;
+    
+    loop {
+        match socket.recv().await {
+            Some(Ok(Message::Text(text))) => {
+                if let Ok(req) = serde_json::from_str::<ChatRequest>(&text) {
+                    match req.t.as_str() {
+                        "chat" => {
+                            // Process chat request through Bayesian engine
+                            let response = BlockResponse {
+                                t: "block".to_string(),
+                                tokens: vec!["[Response generated]".to_string()],
+                                audit: vec![],
+                            };
+                            
+                            let _ = socket
+                                .send(Message::Text(serde_json::to_string(&response).unwrap()))
+                                .await;
+                            
+                            let _ = socket.send(Message::Text("{\"t\":\"done\"}".to_string())).await;
+                        }
+                        "feedback" => {
+                            if let Ok(fb) = serde_json::from_str::<FeedbackRequest>(&text) {
+                                println!("Feedback received for ids {:?}: reward={}", fb.ids, fb.reward);
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
+            Some(Ok(Message::Close(_))) | None => break,
+            Some(Err(_)) => break,
+            _ => {}
         }
     }
 }

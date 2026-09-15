@@ -65,11 +65,6 @@ pub struct HealingConfig {
 impl Config {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let content = fs::read_to_string(path)?;
-        let config: Config = ini::Ini::load_from_str(&content)?
-            .into_section(None)
-            .ok_or("No default section in ini")?;
-        
-        // Manual parsing since ini crate doesn't directly deserialize
         Self::parse_ini(&content)
     }
     

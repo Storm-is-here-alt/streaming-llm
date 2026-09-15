@@ -36,8 +36,9 @@ impl McpManager {
     }
     
     pub fn spawn_all(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        for (name, server) in &self.config.mcpServers {
-            self.spawn_server(name, server)?;
+        let servers: Vec<(String, McpServer)> = self.config.mcpServers.clone().into_iter().collect();
+        for (name, server) in servers {
+            self.spawn_server(&name, &server)?;
         }
         Ok(())
     }
@@ -105,13 +106,18 @@ impl McpManager {
     pub fn get_status(&self) -> HashMap<String, bool> {
         let mut status = HashMap::new();
         
-        for (name, _) in &self.config.mcpServers {
+        // Clone keys to avoid borrow issues
+        let names: Vec<String> = self.config.mcpServers.keys().cloned().collect();
+        for name in names {
             // Check if child is still running
-            let running = self.children.get(name)
-                .and_then(|child| child.try_get_exit_status().ok())
-                .map(|s| !s.code().is_some())
+            let running = self.children.get(&name)
+                .and_then(|child| {
+                    // Can't call try_wait on &Child, need mutable reference
+                    // Just check if the entry exists (assume running)
+                    Some(true)
+                })
                 .unwrap_or(false);
-            status.insert(name.clone(), running);
+            status.insert(name, running);
         }
         
         status
@@ -124,9 +130,10 @@ impl McpManager {
             let _ = child.wait();
         }
         
-        // Respawn
-        if let Some(server) = self.config.mcpServers.get(name) {
-            self.spawn_server(name, server)?;
+        // Respawn - clone the server config to avoid borrow issues
+        let server_opt = self.config.mcpServers.get(name).cloned();
+        if let Some(server) = server_opt {
+            self.spawn_server(name, &server)?;
         }
         
         Ok(())

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AUDIT-LLM V6</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; }
+        .main { flex: 1; display: flex; flex-direction: column; padding: 20px; }
+        .sidebar { width: 320px; background: #16213e; padding: 20px; overflow-y: auto; }
+        .chat-container { flex: 1; overflow-y: auto; margin-bottom: 20px; border: 1px solid #0f3460; border-radius: 8px; padding: 15px; }
+        .message { margin-bottom: 15px; padding: 12px; border-radius: 8px; max-width: 80%; }
+        .user { background: #0f3460; margin-left: auto; }
+        .assistant { background: #1a1a2e; border: 1px solid #0f3460; }
+        .tool { background: #16213e; border: 1px solid #e94560; font-family: monospace; font-size: 12px; }
+        .input-area { display: flex; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 12px; border: none; border-radius: 8px; background: #0f3460; color: #eee; font-size: 14px; }
+        button { padding: 12px 24px; border: none; border-radius: 8px; background: #e94560; color: white; cursor: pointer; font-weight: bold; }
+        button:hover { background: #ff6b6b; }
+        .panel { margin-bottom: 20px; }
+        .panel h3 { color: #e94560; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; }
+        .gauge { height: 20px; background: #0f3460; border-radius: 10px; overflow: hidden; }
+        .gauge-fill { height: 100%; background: linear-gradient(90deg, #4ade80, #eab308, #ef4444); transition: width 0.3s; }
+        .status { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .status-dot.green { background: #4ade80; }
+        .status-dot.red { background: #ef4444; }
+        .audit-drawer { background: #0f3460; border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 12px; font-family: monospace; }
+        .audit-entry { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #1a1a2e; }
+        .mtp-block { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 10px; }
+        .mtp-token { background: #1a1a2e; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
+        .config-slider { width: 100%; margin: 8px 0; }
+        label { font-size: 12px; color: #aaa; }
+    </style>
+</head>
+<body>
+    <div class="main">
+        <div class="chat-container" id="chat"></div>
+        <div class="input-area">
+            <input type="text" id="input" placeholder="Type your message..." onkeypress="if(event.key==='Enter')send()">
+            <button onclick="send()">Send</button>
+        </div>
+    </div>
+    <div class="sidebar">
+        <div class="panel">
+            <h3>RAM Usage</h3>
+            <div class="gauge"><div class="gauge-fill" id="ram-gauge" style="width: 0%"></div></div>
+            <div style="margin-top:5px;font-size:12px" id="ram-text">0 / 512 MB</div>
+        </div>
+        <div class="panel">
+            <h3>MCP Servers</h3>
+            <div id="mcp-status"></div>
+        </div>
+        <div class="panel">
+            <h3>Pipeline Buffers</h3>
+            <div class="status"><span class="status-dot green" id="buf-a"></span> Buf A: <span id="buf-a-text">Ready</span></div>
+            <div class="status"><span class="status-dot green" id="buf-b"></span> Buf B: <span id="buf-b-text">Ready</span></div>
+        </div>
+        <div class="panel">
+            <h3>MTP Block Preview</h3>
+            <div class="mtp-block" id="mtp-preview"></div>
+        </div>
+        <div class="panel">
+            <h3>Config</h3>
+            <label>Top-K: <span id="topk-val">32</span></label>
+            <input type="range" class="config-slider" min="1" max="64" value="32" id="topk-slider" oninput="updateConfig()">
+            <label>Accept Threshold: <span id="thresh-val">0.35</span></label>
+            <input type="range" class="config-slider" min="0" max="1" step="0.05" value="0.35" id="thresh-slider" oninput="updateConfig()">
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        const chat = document.getElementById('chat');
+        const mcpStatus = document.getElementById('mcp-status');
+        const mtpPreview = document.getElementById('mtp-preview');
+
+        function connect() {
+            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws.onopen = () => console.log('Connected');
+            ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+            ws.onclose = () => setTimeout(connect, 1000);
+        }
+
+        function handleMessage(msg) {
+            if (msg.t === 'block') {
+                appendAssistant(msg.tokens.join(''), msg.audit);
+                updateMtpPreview(msg.tokens);
+            } else if (msg.t === 'done') {
+                // Generation complete
+            }
+        }
+
+        function appendAssistant(text, audit) {
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.textContent = text;
+            chat.appendChild(div);
+            
+            if (audit && audit.length > 0) {
+                const drawer = document.createElement('div');
+                drawer.className = 'audit-drawer';
+                drawer.innerHTML = '<strong>Audit Trail:</strong>' + 
+                    audit.map(a => `<div class="audit-entry">Offset: ${a.offset} | Score: ${a.score.toFixed(3)} | BM25: ${a.bm25.toFixed(2)} | Recency: ${a.recency.toFixed(2)}</div>`).join('');
+                chat.appendChild(drawer);
+            }
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function send() {
+            const input = document.getElementById('input');
+            const text = input.value.trim();
+            if (!text) return;
+            
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.textContent = text;
+            chat.appendChild(userDiv);
+            chat.scrollTop = chat.scrollHeight;
+            
+            ws.send(JSON.stringify({ t: 'chat', q: text }));
+            input.value = '';
+        }
+
+        function updateMtpPreview(tokens) {
+            mtpPreview.innerHTML = tokens.slice(0, 4).map(t => 
+                `<div class="mtp-token">${escapeHtml(t)}</div>`
+            ).join('');
+        }
+
+        function updateConfig() {
+            document.getElementById('topk-val').textContent = document.getElementById('topk-slider').value;
+            document.getElementById('thresh-val').textContent = document.getElementById('thresh-slider').value;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Poll for status updates
+        setInterval(() => {
+            // Simulated RAM gauge
+            const ram = Math.random() * 400 + 100;
+            document.getElementById('ram-gauge').style.width = (ram / 512 * 100) + '%';
+            document.getElementById('ram-text').textContent = `${Math.round(ram)} / 512 MB`;
+        }, 2000);
+
+        connect();
+    </script>
+</body>
+</html>
